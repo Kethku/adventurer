@@ -1,0 +1,14 @@
+{
+  "name": "adventurer",
+  "version": "0.0.1",
+  "description": "A Vim File Adventure",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "neovim": "^4.5.0"
+  }
+}
