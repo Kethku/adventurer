@@ -9,6 +9,9 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "neovim": "^4.5.0"
+    "@types/node": "^12.7.7",
+    "@types/tmp": "^0.1.0",
+    "neovim": "^4.5.0",
+    "tmp": "^0.1.0"
   }
 }
