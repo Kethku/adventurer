@@ -15,7 +15,6 @@ import { Neovim, Plugin, Command } from "neovim";
 interface Item {
   name: string;
   fullPath: string;
-  id: number;
   isDir: boolean;
 } 
 
@@ -28,6 +27,45 @@ interface Adventure {
 }
 
 let adventureLookup = new Map<string, Adventure>();
+
+enum FileUpdates {
+  New,
+  Rename,
+  Copy,
+  Move,
+  Delete
+}
+
+interface IOperation {
+  type: FileUpdates;
+  item: Item;
+}
+
+interface INew {
+  type: FileUpdates.New,
+  item: Item
+}
+
+interface IRename extends IOperation {
+  type: FileUpdates.Copy;
+  newName: string;
+}
+
+interface ICopy extends IOperation {
+  type: FileUpdates.Copy;
+  destination: string;
+}
+
+interface IMove extends IOperation {
+  type: FileUpdates.Move;
+  destination: string;
+}
+
+interface IDelete extends IOperation {
+  type: FileUpdates.Delete,
+}
+
+type FileOperation = INew | IRename | ICopy | IMove | IDelete;
 
 function getFiles(directory: string) {
   function isDirectory(file: string) {
@@ -86,8 +124,16 @@ async function createDirectoryBuffer(nvim: Neovim) {
 }
 
 async function commitChanges(nvim: Neovim) {
-  let newLookup = new Map<number, Item>();
-  let newIds = new Set<number>();
+  let updatedLookup = new Map<number, Item[]>();
+  function addUpdatedItem(id: number, item: Item) {
+    if (updatedLookup.has(id)) {
+      updatedLookup.get(id).push(item);
+    } else {
+      updatedLookup.set(id, [item]);
+    }
+  }
+
+  let newItems: Item[] = [];
 
   for (let adventure of adventureLookup.values()) {
     for (let line of adventure.lines) {
@@ -103,32 +149,44 @@ async function commitChanges(nvim: Neovim) {
           isDir = true;
         }
 
-        newLookup.set(id, {
-          id, name, fullPath, isDir
+        addUpdatedItem(id, {
+          name, fullPath, isDir
         });
+      } else {
+        // TODO: Extract repeated code
+        let name = line.trim();
+        let fullPath = path.join(adventure.fullDirectoryPath, name);
+        let isDir = false;
 
-        if (!fileLookup.has(id)) {
-          newIds.add(id);
+        if (name.endsWith("/")) {
+          name = name.substring(0, name.length - 1);
+          isDir = true;
         }
+
+        newItems.push({
+          name, fullPath, isDir
+        });
       }
     }
   }
 
   await nvim.command("enew");
-  for (let item of fileLookup.values()) {
-    if (newLookup.has(item.id)) {
-      let newItem = newLookup.get(item.id);
-      if (item.fullPath !== newItem.fullPath) {
-        await nvim.buffer.append(`${item.fullPath} => ${newItem.fullPath}`);
+  for (let id of fileLookup.keys()) {
+    let item = fileLookup.get(id);
+    if (updatedLookup.has(id)) {
+      let newItems = updatedLookup.get(id);
+      for (let newItem of newItems) {
+        if (item.fullPath !== newItem.fullPath) {
+          await nvim.buffer.append(`${item.fullPath} => ${newItem.fullPath}`);
+        }
       }
     } else {
-      await nvim.outWriteLine(`${item.fullPath} => DELETED`);
+      await nvim.buffer.append(`${item.fullPath} => DELETED`);
     }
   }
 
-  for (let newId of newIds) {
-    let newItem = newLookup.get(newId);
-    await nvim.outWriteLine(`${newItem.fullPath} => NEW`);
+  for (let newItem of newItems) {
+    await nvim.buffer.append(`${newItem.fullPath} => NEW`);
   }
 
   currentFileId = 0;
