@@ -9,6 +9,7 @@ import { parseDirectoryBuffer, parseLine } from './parser';
 import { appendOrAdd } from './utils';
 import { optimize } from './optimizations';
 
+
 /*
  * TODO: Fix directory update checks
  * TODO: Actually update files on commit
@@ -159,7 +160,6 @@ async function executeOperations(nvim: Neovim) {
   let executables = Array.from(lines
     .map(parseOperationString)
     .filter(executable => executable));
-  debugger;
   console.log(executables);
 }
 
