@@ -1,9 +1,13 @@
-import * as fs from "fs";
 import * as path from "path";
 
 import { Neovim, Plugin, Command } from "neovim";
 
-import { FileOperation, New, Copy, Delete, operationToString } from "./operations";
+import { Item, Directory, itemToString, getFiles } from "./files";
+import { FileOperation, New, Copy, Cut, operationToString, parseOperationString } from "./operations";
+import { newId } from "./ids";
+import { parseDirectoryBuffer, parseLine } from './parser';
+import { appendOrAdd } from './utils';
+import { optimize } from './optimizations';
 
 /*
  * TODO: Fix directory update checks
@@ -14,59 +18,29 @@ import { FileOperation, New, Copy, Delete, operationToString } from "./operation
  * TODO: Error handling
  */
 
-export interface Item {
-  name: string;
-  fullPath: string;
-  isDir: boolean;
-} 
-
-interface Directory {
-  fullDirectoryPath: string;
-  lines: string[];
-}
-
-let currentFileId = 1;
-let fileLookup = new Map<number, Item[]>();
-let currentState = new Map<number, Item[]>();
+let initialState = new Map<string, Item>();
+let currentState = new Map<string, Item[]>();
 let directoryLookup = new Map<string, Directory>();
 
-let operationList: FileOperation[][] = [];
+let operationList: Map<string, Map<Item, FileOperation[]>>[] = [];
 
-async function tempBuffer(nvim: Neovim, name: string, lines: string[] = []) {
+function reset() {
+  initialState = new Map<string, Item>();
+  currentState = new Map<string, Item[]>();
+  directoryLookup = new Map<string, Directory>();
+
+  operationList = [];
+}
+
+async function tempBuffer(nvim: Neovim, name: string, lines: string[] = [], fileType = "balsamic") {
   await nvim.command("enew");
   const buffer = nvim.buffer;
   await buffer.setOption("buftype", "nofile"); // Ensure the buffer won't be written to disk
   await buffer.setOption("bufhidden", "wipe"); // Close the buffer when done
+  await buffer.setOption("ft", fileType); // Set file type to balsami woc
   await buffer.setLines(lines, { start: 0, end: -1, strictIndexing: false });
-  await nvim.command(`file ${name}`); // Change buffer name to match the current file
+  await nvim.command(`file ${name.replace("\\", "/")}`); // Change buffer name to match the current file
   return buffer;
-}
-
-function itemToString(item: Item, id: number, idLength: number = 0) {
-  let sufix = item.isDir ? "\\" : "";
-  return id.toString().padStart(idLength, "0") + ":" + item.name + sufix;
-}
-
-function getFiles(directory: string) {
-  function isDirectory(file: string) {
-    return fs.lstatSync(file).isDirectory();
-  }
-
-  const items = fs.readdirSync(directory).map(name => { 
-    let id = currentFileId;
-    currentFileId += 1;
-    let fullPath = path.resolve(path.join(directory, name));
-    let isDir = isDirectory(fullPath);
-    let item = { name, fullPath, id, isDir };
-    fileLookup.set(id, [item]);
-    return item;
-  });
-
-  let idLength = (currentFileId - 1).toString().length;
-
-  return items.filter(item => item.isDir)
-    .concat(items.filter(item => !item.isDir))
-    .map(item => itemToString(item, item.id, idLength));
 }
 
 async function createDirectoryBuffer(fullDirectoryPath: string, nvim: Neovim) {
@@ -74,7 +48,16 @@ async function createDirectoryBuffer(fullDirectoryPath: string, nvim: Neovim) {
   if (directoryLookup.has(fullDirectoryPath)) {
     lines = directoryLookup.get(fullDirectoryPath).lines;
   } else {
-    lines = getFiles(fullDirectoryPath);
+    let files = getFiles(fullDirectoryPath);
+    lines = [];
+
+    for (let file of files) {
+      let id = newId();
+      initialState.set(id, file);
+      currentState.set(id, [file]);
+      lines.push(itemToString(file, id));
+    }
+
     directoryLookup.set(fullDirectoryPath, { fullDirectoryPath, lines });
   }
 
@@ -90,112 +73,130 @@ async function createDirectoryBuffer(fullDirectoryPath: string, nvim: Neovim) {
 }
 
 function recordChanges() {
-  let updatedLookup = new Map<number, Item[]>();
-  function addUpdatedItem(id: number, item: Item) {
-    if (updatedLookup.has(id)) {
-      updatedLookup.get(id).push(item);
-    } else {
-      updatedLookup.set(id, [item]);
-    }
-  }
+  let updatedLookup = parseDirectoryBuffer(directoryLookup);
+  let newOperationsById = new Map<string, Map<Item, FileOperation[]>>();
 
-  for (let directory of directoryLookup.values()) {
-    for (let line of directory.lines) {
-      line = line.trim();
-      if (line.length != 0) {
-        let splitIndex = line.indexOf(":");
-        let id = -1;
-        let name = line;
-
-        if (splitIndex != -1) {
-          id = parseInt(line.substring(0, splitIndex).trim());
-          name = line.substring(splitIndex + 1).trim();
-        }
-
-        let fullPath = path.join(directory.fullDirectoryPath, name);
-        let isDir = false;
-
-        if (name.endsWith("/")) {
-          name = name.substring(0, name.length - 1);
-          isDir = true;
-        }
-
-        addUpdatedItem(id, {
-          name, fullPath, isDir
-        });
-      }
-    }
-  }
-
-  let newOperations: FileOperation[] = [];
-
-  for (let id of fileLookup.keys()) {
-    let currentItems = fileLookup.get(id);
+  for (let id of currentState.keys()) {
+    let newOperations = new Map<Item, FileOperation[]>();
+    let currentItems = currentState.get(id);
     if (updatedLookup.has(id)) {
       let newItems = updatedLookup.get(id);
       for (let newItem of newItems) {
         let matchingItem = currentItems.find(currentItem => currentItem.fullPath === newItem.fullPath);
         if (!matchingItem) {
-          newOperations.push(Copy(currentItems[0], newItem.fullPath));
+          appendOrAdd(newOperations, currentItems[0], Copy(newItem.fullPath));
         }
       }
 
       for (let currentItem of currentItems) {
         let matchingNewItem = newItems.find(newItem => newItem.fullPath === currentItem.fullPath);
         if (!matchingNewItem) {
-          newOperations.push(Delete(currentItem));
+          appendOrAdd(newOperations, currentItem, Cut());
         }
       }
     } else {
       for (let currentItem of currentItems) {
-        newOperations.push(Delete(currentItem));
+        appendOrAdd(newOperations, currentItem, Cut());
       }
+    }
+
+    if (newOperations.size != 0) {
+      newOperationsById.set(id, newOperations);
     }
   }
 
   for (let id of updatedLookup.keys()) {
-    if (!fileLookup.has(id)) {
+    if (!currentState.has(id)) {
+      let operationsByItem = new Map<Item, FileOperation[]>();
+      if (newOperationsById.has(id)) {
+        operationsByItem = newOperationsById.get(id);
+      }
+
       let updatedItems = updatedLookup.get(id);
       for (let updatedItem of updatedItems) {
-        newOperations.push(New(updatedItem));
+        appendOrAdd(operationsByItem, updatedItem, New());
+      }
+
+      if (operationsByItem.size != 0) {
+        newOperationsById.set(id, operationsByItem);
       }
     }
   }
 
-  if (newOperations.length != 0) {
-    operationList.push(newOperations);
+  if (newOperationsById.size != 0) {
+    operationList.push(newOperationsById);
   }
 
-  fileLookup = updatedLookup;
+  currentState = updatedLookup;
 }
 
 async function commitChanges(nvim: Neovim) {
   let lines = [];
   let groupNumber = 1;
+
+  operationList = optimize(operationList);
+
   for (let group of operationList) {
     lines.push("Command Group " + groupNumber);
     groupNumber++;
-    for (let operation of group) {
-      lines.push("  " + operationToString(operation));
+    for (let id of group.keys()) {
+      let operationsByItem = group.get(id);
+      for (let item of operationsByItem.keys()) {
+        let operations = operationsByItem.get(item);
+        for (let operation of operations) {
+          lines.push("  " + operationToString(id, item, operation));
+        }
+      }
     }
   }
-  tempBuffer(nvim, "commands", lines);
-  operationList = [];
+  tempBuffer(nvim, "commands", lines, "balsamic-commit");
+
+  reset();
+}
+
+async function executeOperations(nvim: Neovim) {
+  let lines = await nvim.buffer.lines;
+  let executables = Array.from(lines
+    .map(parseOperationString)
+    .filter(executable => executable));
+  debugger;
+  console.log(executables);
 }
 
 @Plugin({ dev: false })
 export default class BalsamicPlugin {
   constructor(public nvim: Neovim) {  }
 
+  @Command("Balsamic")
+  async openParent() {
+    const fullFilePath = await this.nvim.commandOutput("echo expand('%:p')") // Query the current file directory path
+    const fullDirectoryPath = path.resolve(path.join(fullFilePath, '..'));
+    createDirectoryBuffer(fullDirectoryPath, this.nvim);
+  }
+
+  @Command("BalsamicOpen")
+  async openCurrentLine() {
+    let line = await this.nvim.getLine();
+    let parsedLine = parseLine(line);
+    if (parsedLine) {
+      let { name } = parsedLine;
+      let fullDirectoryPath = await this.nvim.commandOutput("pwd");
+
+      if (name.endsWith("\\")) {
+        createDirectoryBuffer(path.join(fullDirectoryPath, name), this.nvim);
+      } else {
+        this.nvim.command(`e ${name}`);
+      }
+    }
+  }
+
   @Command("BalsamicCommit")
-  async balsamicCommit() {
+  balsamicCommit() {
     commitChanges(this.nvim);
   }
 
-  @Command("Balsamic")
-  async balsamic() {
-    const fullFilePath = path.resolve(await this.nvim.commandOutput("echo expand('%:p')")) // Query the current file directory path
-    const fullDirectoryPath = path.resolve(path.join(fullFilePath, '..'));
-    createDirectoryBuffer(fullDirectoryPath, this.nvim);
+  @Command("BalsamicExecute")
+  balsamicExecute() {
+    executeOperations(this.nvim)
   }
 }
