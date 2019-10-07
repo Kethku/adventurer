@@ -3,12 +3,12 @@ import * as path from "path";
 import { Neovim, Plugin, Command } from "neovim";
 
 import { Item, Directory, itemToString, getFiles } from "./files";
-import { FileOperation, New, Copy, Cut, operationToString, parseOperationString } from "./operations";
+import { FileOperation, New, Copy, Cut, operationToString, parseOperationString, FileOperations } from "./operations";
 import { newId } from "./ids";
 import { parseDirectoryBuffer, parseLine } from './parser';
 import { appendOrAdd } from './utils';
 import { optimize } from './optimizations';
-
+import { executeFileOperation } from './execute';
 
 /*
  * TODO: Fix directory update checks
@@ -19,6 +19,7 @@ import { optimize } from './optimizations';
  * TODO: Error handling
  */
 
+let namespaceId = 0;
 let initialState = new Map<string, Item>();
 let currentState = new Map<string, Item[]>();
 let directoryLookup = new Map<string, Directory>();
@@ -38,9 +39,11 @@ async function tempBuffer(nvim: Neovim, name: string, lines: string[] = [], file
   const buffer = nvim.buffer;
   await buffer.setOption("buftype", "nofile"); // Ensure the buffer won't be written to disk
   await buffer.setOption("bufhidden", "wipe"); // Close the buffer when done
-  await buffer.setOption("ft", fileType); // Set file type to balsami woc
+  await nvim.command("setlocal noswapfile")
+  await nvim.command("0f");
+  await nvim.command(`file ${name.replace(/\\/g, "/")}`); // Change buffer name to match the current file
+  await buffer.setOption("ft", fileType); // Set file type to balsamic or filetype
   await buffer.setLines(lines, { start: 0, end: -1, strictIndexing: false });
-  await nvim.command(`file ${name.replace("\\", "/")}`); // Change buffer name to match the current file
   return buffer;
 }
 
@@ -83,14 +86,14 @@ function recordChanges() {
     if (updatedLookup.has(id)) {
       let newItems = updatedLookup.get(id);
       for (let newItem of newItems) {
-        let matchingItem = currentItems.find(currentItem => currentItem.fullPath === newItem.fullPath);
+        let matchingItem = currentItems.find(currentItem => currentItem.fullPath === newItem.fullPath && currentItem.name === newItem.name);
         if (!matchingItem) {
           appendOrAdd(newOperations, currentItems[0], Copy(newItem.fullPath));
         }
       }
 
       for (let currentItem of currentItems) {
-        let matchingNewItem = newItems.find(newItem => newItem.fullPath === currentItem.fullPath);
+        let matchingNewItem = newItems.find(newItem => newItem.fullPath === currentItem.fullPath && currentItem.name === newItem.name);
         if (!matchingNewItem) {
           appendOrAdd(newOperations, currentItem, Cut());
         }
@@ -158,9 +161,28 @@ async function commitChanges(nvim: Neovim) {
 async function executeOperations(nvim: Neovim) {
   let lines = await nvim.buffer.lines;
   let executables = Array.from(lines
-    .map(parseOperationString)
-    .filter(executable => executable));
-  console.log(executables);
+    .map(parseOperationString));
+
+  let newFiles = [];
+
+  for (let i = 0; i < executables.length; i++) {
+    let executable = executables[i];
+    if (!executable) continue;
+    try {
+      executeFileOperation(executable);
+      if (executable.type === FileOperations.New) {
+        newFiles.push(executable.fullPath);
+      }
+      namespaceId = await nvim.buffer.setVirtualText(namespaceId, i, [["DONE", "Comment"]]);
+    } catch (err) {
+      namespaceId = await nvim.buffer.setVirtualText(namespaceId, i, [["Something went wrong: " + JSON.stringify(err), "WarningMsg"]]);
+      return;
+    }
+  }
+
+  for (let newFile of newFiles) {
+    await nvim.command("vs " + newFile);
+  }
 }
 
 @Plugin({ dev: false })

@@ -7,5 +7,9 @@
   "devDependencies": {
     "@types/node": "^12.7.7",
     "neovim": "^4.5.0"
+  },
+  "dependencies": {
+    "@types/fs-extra": "^8.0.0",
+    "fs-extra": "^8.1.0"
   }
 }

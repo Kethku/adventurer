@@ -1,4 +1,4 @@
-import { FileOperation, FileOperations, ICopy, IDelete, Move, IMove } from "./operations";
+import { FileOperation, FileOperations, ICopy, ICut, Move, IMove } from "./operations";
 import { Item } from './files';
 
 /**
@@ -13,18 +13,18 @@ function createMoves(operationGroups: Map<string, Map<Item, FileOperation[]>>[])
         let operations = operationsByItem.get(item);
 
         let copyOperation: ICopy = null;
-        let deleteOperation: IDelete = null;
+        let cutOperation: ICut = null;
 
         for (let operation of operations) {
           if (operation.type === FileOperations.Copy) {
             copyOperation = operation;
-          } else if (operation.type === FileOperations.Delete) {
-            deleteOperation = operation;
+          } else if (operation.type === FileOperations.Cut) {
+            cutOperation = operation;
           }
         }
 
-        if (copyOperation && deleteOperation) {
-          operations = operations.filter(operation => operation !== copyOperation && operation !== deleteOperation);
+        if (copyOperation && cutOperation) {
+          operations = operations.filter(operation => operation !== copyOperation && operation !== cutOperation);
           operations.push(Move(copyOperation.destination));
         }
 
@@ -34,49 +34,72 @@ function createMoves(operationGroups: Map<string, Map<Item, FileOperation[]>>[])
   }
 }
 
+function mergeConsecutiveMoves(firstGroup: Map<string, Map<Item, FileOperation[]>>, secondGroup: Map<string, Map<Item, FileOperation[]>>) {
+  let idsToDelete: string[] = [];
+  for (let id of firstGroup.keys()) {
+    let firstOperationsByItem = firstGroup.get(id);
+    let itemsToDelete: Item[] = [];
+    if (secondGroup.has(id)) {
+      let secondOperationsByItem = secondGroup.get(id);
+
+      if (firstOperationsByItem.size != 1 || secondOperationsByItem.size != 1) continue;
+      let firstItem = firstOperationsByItem.keys().next().value as Item;
+      let firstOperations = firstOperationsByItem.get(firstItem);
+      let secondItem = secondOperationsByItem.keys().next().value as Item;
+      let secondOperations = secondOperationsByItem.get(secondItem);
+
+      if (firstOperations.length != 1 || secondOperations.length != 1) continue;
+      let firstOperation = firstOperations[0];
+      let secondOperation = secondOperations[0];
+
+      if (secondOperation.type === FileOperations.Move) {
+        if (firstOperation.type === FileOperations.New && firstItem.fullPath === secondItem.fullPath) {
+          itemsToDelete.push(firstItem);
+          secondItem.fullPath = secondOperation.destination;
+          secondOperations[0] = { type: FileOperations.New }; // Change second operation to a new
+        }
+
+         
+        if (firstOperation.type === FileOperations.Move && firstOperation.destination === secondItem.fullPath) {
+          itemsToDelete.push(firstItem);
+          secondItem.fullPath = firstItem.fullPath;
+        }
+      }
+    }
+
+    for (let itemToDelete of itemsToDelete) {
+      firstOperationsByItem.delete(itemToDelete);
+    }
+
+    if (firstOperationsByItem.size === 0) {
+      idsToDelete.push(id);
+    }
+  }
+
+  for (let idToDelete of idsToDelete) {
+    firstGroup.delete(idToDelete);
+  }
+}
+
 /**
  * Loop over every operation group and merge consecutive moves.
  */
 function mergeMoves(operations: Map<string, Map<Item, FileOperation[]>>[]) {
+  if (operations.length < 2) return operations;
+
   let resultingOperations: Map<string, Map<Item, FileOperation[]>>[] = [];
 
-  function getSingleMove(group: Map<string, Map<Item, FileOperation[]>>) {
-    if (group.size == 1) {
-      let operationsByItem = group.get(group.keys().next().value);
-      if (operationsByItem.size == 1) {
-        let item = operationsByItem.keys().next().value as Item;
-        let operations = operationsByItem.get(item);
-        if (operations.length == 1 && operations[0].type === FileOperations.Move) {
-          let operation = operations[0] as IMove;
-          return { item, operation };
-        }
-      }
-    }
-    return null;
-  }
-
+  let first: Map<string, Map<Item, FileOperation[]>> = null;
+  let second = operations.shift();
   do {
-    let nextGroup = operations.shift();
-    resultingOperations.push(nextGroup);
+    if (first) resultingOperations.push(first);
+    first = second;
+    second = operations.shift();
 
-    let move = getSingleMove(nextGroup);
-    if (move) {
-      do {
-        let nextNextGroup = operations.shift();
-        let nextMove = getSingleMove(nextNextGroup);
-        if (nextMove && move.operation.destination === nextMove.item.fullPath) {
-          move.operation.destination = nextMove.operation.destination;
-        } else {
-          resultingOperations.push(nextNextGroup);
-          break;
-        }
-      } while (operations.length > 0);
-    }
-  } while (operations.length > 1);
-
-  if (operations.length != 0) {
-    resultingOperations.push(operations.shift());
-  }
+    mergeConsecutiveMoves(first, second);
+    if (first.size == 0) first = null;
+  } while (operations.length != 0);
+  resultingOperations.push(second);
 
   return resultingOperations;
 }

@@ -1,4 +1,4 @@
-import { Item } from "./files";
+import { Item, itemIsDirectory, nameIsDirectory } from "./files";
 
 export enum FileOperations {
   // Recognizable operations
@@ -28,6 +28,7 @@ export function New() : INew {
 export interface IExecutableNew {
   type: FileOperations.New;
   fullPath: string;
+  isDirectory: boolean;
 }
 
 export interface ICopy extends IOperation {
@@ -116,7 +117,7 @@ export interface IExecutableMove {
 export type FileOperation = INew | ICopy | ICut | IPaste | IDelete | IMove;
 
 function itemToString(item: Item) {
-  return item.fullPath + (item.isDir ? "\\" : "");
+  return item.fullPath + (itemIsDirectory(item) ? "\\" : "");
 }
 
 export function operationToString(id: string, item: Item, operation: FileOperation) {
@@ -136,15 +137,16 @@ export function operationToString(id: string, item: Item, operation: FileOperati
   }
 }
 
-export type ExecutableFileOperations = IExecutableNew | IExecutableCopy | IExecutableCut | IExecutablePaste | IExecutableDelete | IExecutableMove;
+export type ExecutableFileOperation = IExecutableNew | IExecutableCopy | IExecutableCut | IExecutablePaste | IExecutableDelete | IExecutableMove;
 
-export function parseOperationString(line: string) : ExecutableFileOperations {
+export function parseOperationString(line: string) : ExecutableFileOperation {
   line = line.trim();
   if (line.startsWith("NEW")) {
     let rest = line.substr(3).trim();
     return {
       type: FileOperations.New,
-      fullPath: rest.trim(),
+      fullPath: rest,
+      isDirectory: nameIsDirectory(rest)
     };
   } else if (line.startsWith("COPY")) {
     let [ source, destination ] = line.substr(4).split(" => ").map(part => part.trim());
@@ -170,7 +172,7 @@ export function parseOperationString(line: string) : ExecutableFileOperations {
   } else if (line.startsWith("DELETE")) {
     let rest = line.substr(6).trim();
     return {
-      type: FileOperations.New,
+      type: FileOperations.Delete,
       fullPath: rest.trim(),
     };
   } else if (line.startsWith("MOVE")) {

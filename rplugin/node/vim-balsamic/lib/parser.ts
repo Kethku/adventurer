@@ -35,14 +35,9 @@ export function parseDirectoryBuffer(directoryLookup: Map<string, Directory>) {
       if (parsedLine) {
         let { id, name } = parsedLine;
         let fullPath = path.resolve(path.join(directory.fullDirectoryPath, name));
-        let isDir = false;
-
-        if (name.endsWith("\\")) {
-          isDir = true;
-        }
 
         addUpdatedItem(id, {
-          name, fullPath, isDir
+          name, fullPath
         });
       }
     }
