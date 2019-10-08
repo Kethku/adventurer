@@ -63,15 +63,25 @@ async function createDirectoryBuffer(nvim: Neovim, fullDirectoryPath: string) {
       lines.push(itemToLine(file, id));
     }
 
-    directoryLookup.set(fullDirectoryPath, { fullDirectoryPath, lines });
+    let parent = path.parse(fullDirectoryPath).dir + "/";
+    directoryLookup.set(fullDirectoryPath, { fullDirectoryPath, parent, lines });
   }
 
   let buffer = await tempBuffer(nvim, fullDirectoryPath, lines)
-  await nvim.command(`lcd ${fullDirectoryPath}`); // Set the buffer location
-
   buffer.listen("lines", async () => {
+    let currentLine = (await nvim.getLine()).trim();
+    if (currentLine.indexOf(":") != 5) {
+      await nvim.setLine(newId() + ":");
+      let mode = await nvim.command("echo mode()");
+      if (mode === "n") {
+        await nvim.input("$");
+      } else {
+        await nvim.input("<ESC>A");
+      }
+    }
+
     let directory = directoryLookup.get(fullDirectoryPath);
-    directory.lines = await buffer.lines;
+    directory.lines = await buffer.lines;;
     directoryLookup.set(fullDirectoryPath, directory);
     recordChanges();
   });
@@ -194,9 +204,14 @@ export default class BalsamicPlugin {
 
   @Command("Balsamic")
   async openParent() {
-    const fullFilePath = await this.nvim.commandOutput("echo expand('%:p')") // Query the current file directory path
-    const fullDirectoryPath = path.resolve(path.join(fullFilePath, '..'));
-    createDirectoryBuffer(this.nvim, fullDirectoryPath);
+    const fullFilePath = (await this.nvim.commandOutput("echo expand('%:p')")) + "/" // Query the current file directory path
+    if (directoryLookup.has(fullFilePath)) {
+      let directory = directoryLookup.get(fullFilePath);
+      createDirectoryBuffer(this.nvim, directory.parent);
+    } else {
+      const fullDirectoryPath = path.resolve(path.join(fullFilePath, '..'));
+      createDirectoryBuffer(this.nvim, fullDirectoryPath);
+    }
   }
 
   @Command("BalsamicOpen")
@@ -207,7 +222,7 @@ export default class BalsamicPlugin {
       let { name } = parsedLine;
       let fullDirectoryPath = await this.nvim.commandOutput("pwd");
 
-      if (name.endsWith("\\")) {
+      if (itemIsDirectory(name)) {
         createDirectoryBuffer(this.nvim, path.join(fullDirectoryPath, name));
       } else {
         this.nvim.command(`e ${name}`);

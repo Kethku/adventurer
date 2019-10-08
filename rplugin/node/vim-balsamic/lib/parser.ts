@@ -1,20 +1,18 @@
 import * as path from "path";
 
-import { Directory, pathToItem } from "./files";
+import { Directory } from "./files";
 
 export function parseLine(line: string) {
   line = line.trim();
   if (line.length != 0) {
     let splitIndex = line.indexOf(":");
-    let id = "new";
-    let name = line;
-
     if (splitIndex != -1) {
-      id = line.substring(0, splitIndex).trim();
-      name = line.substring(splitIndex + 1).trim();
+      let id = line.substring(0, splitIndex).trim();
+      let name = line.substring(splitIndex + 1).trim();
+      if (id.length == 5 && name.length != 0) {
+        return { id, name };
+      }
     }
-
-    return { id, name };
   }
   return null;
 }

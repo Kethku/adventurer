@@ -3,6 +3,7 @@ import * as path from "path";
 
 export interface Directory {
   fullDirectoryPath: string;
+  parent: string;
   lines: string[];
 }
 
@@ -22,7 +23,7 @@ export function itemToLine(item: string, id: string) {
   return id + ":" + getName(item);
 }
 
-export function pathToItem(fullPath: string) {
+function pathToItem(fullPath: string) {
   function isDirectory(file: string) {
     return fs.lstatSync(file).isDirectory();
   }
@@ -36,7 +37,6 @@ export function pathToItem(fullPath: string) {
 }
 
 export function getFiles(directory: string) {
-
   if (fs.existsSync(directory)) {
     let files = fs.readdirSync(directory).map(name => { 
       let fullPath = path.resolve(path.join(directory, name));
