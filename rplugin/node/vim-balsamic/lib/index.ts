@@ -2,7 +2,7 @@ import * as path from "path";
 
 import { Neovim, Plugin, Command } from "neovim";
 
-import { Item, Directory, itemToString, getFiles } from "./files";
+import { Directory, itemToLine, getFiles, itemIsDirectory } from "./files";
 import { FileOperation, New, Copy, Cut, operationToString, parseOperationString, FileOperations } from "./operations";
 import { newId } from "./ids";
 import { parseDirectoryBuffer, parseLine } from './parser';
@@ -20,34 +20,35 @@ import { executeFileOperation } from './execute';
  */
 
 let namespaceId = 0;
-let initialState = new Map<string, Item>();
-let currentState = new Map<string, Item[]>();
+let initialState = new Map<string, string>();
+let currentState = new Map<string, string[]>();
 let directoryLookup = new Map<string, Directory>();
 
-let operationList: Map<string, Map<Item, FileOperation[]>>[] = [];
+let operationList: Map<string, Map<string, FileOperation[]>>[] = [];
 
 function reset() {
-  initialState = new Map<string, Item>();
-  currentState = new Map<string, Item[]>();
+  initialState = new Map<string, string>();
+  currentState = new Map<string, string[]>();
   directoryLookup = new Map<string, Directory>();
 
   operationList = [];
 }
 
 async function tempBuffer(nvim: Neovim, name: string, lines: string[] = [], fileType = "balsamic") {
-  await nvim.command("enew");
-  const buffer = nvim.buffer;
-  await buffer.setOption("buftype", "nofile"); // Ensure the buffer won't be written to disk
-  await buffer.setOption("bufhidden", "wipe"); // Close the buffer when done
-  await nvim.command("setlocal noswapfile")
-  await nvim.command("0f");
-  await nvim.command(`file ${name.replace(/\\/g, "/")}`); // Change buffer name to match the current file
-  await buffer.setOption("ft", fileType); // Set file type to balsamic or filetype
-  await buffer.setLines(lines, { start: 0, end: -1, strictIndexing: false });
-  return buffer;
+  nvim.callAtomic([
+    await nvim.command("enew"),
+    await nvim.buffer.setOption("buftype", "nofile"), // Ensure the buffer won't be written to disk
+    await nvim.buffer.setOption("bufhidden", "wipe"), // Close the buffer when done
+    await nvim.buffer.setOption("ft", fileType), // Set file type to balsamic or filetype
+    await nvim.command("setlocal noswapfile"),
+    await nvim.command("0f"),
+    await nvim.command(`file ${name.replace(/\\/g, "/")}`), // Change buffer name to match the current file
+    await nvim.buffer.setLines(lines, { start: 0, end: -1, strictIndexing: false })
+  ]);
+  return nvim.buffer;
 }
 
-async function createDirectoryBuffer(fullDirectoryPath: string, nvim: Neovim) {
+async function createDirectoryBuffer(nvim: Neovim, fullDirectoryPath: string) {
   let lines: string[];
   if (directoryLookup.has(fullDirectoryPath)) {
     lines = directoryLookup.get(fullDirectoryPath).lines;
@@ -59,7 +60,7 @@ async function createDirectoryBuffer(fullDirectoryPath: string, nvim: Neovim) {
       let id = newId();
       initialState.set(id, file);
       currentState.set(id, [file]);
-      lines.push(itemToString(file, id));
+      lines.push(itemToLine(file, id));
     }
 
     directoryLookup.set(fullDirectoryPath, { fullDirectoryPath, lines });
@@ -78,22 +79,22 @@ async function createDirectoryBuffer(fullDirectoryPath: string, nvim: Neovim) {
 
 function recordChanges() {
   let updatedLookup = parseDirectoryBuffer(directoryLookup);
-  let newOperationsById = new Map<string, Map<Item, FileOperation[]>>();
+  let newOperationsById = new Map<string, Map<string, FileOperation[]>>();
 
   for (let id of currentState.keys()) {
-    let newOperations = new Map<Item, FileOperation[]>();
+    let newOperations = new Map<string, FileOperation[]>();
     let currentItems = currentState.get(id);
     if (updatedLookup.has(id)) {
       let newItems = updatedLookup.get(id);
       for (let newItem of newItems) {
-        let matchingItem = currentItems.find(currentItem => currentItem.fullPath === newItem.fullPath && currentItem.name === newItem.name);
+        let matchingItem = currentItems.find(currentItem => currentItem === newItem);
         if (!matchingItem) {
-          appendOrAdd(newOperations, currentItems[0], Copy(newItem.fullPath));
+          appendOrAdd(newOperations, currentItems[0], Copy(newItem));
         }
       }
 
       for (let currentItem of currentItems) {
-        let matchingNewItem = newItems.find(newItem => newItem.fullPath === currentItem.fullPath && currentItem.name === newItem.name);
+        let matchingNewItem = newItems.find(newItem => newItem === currentItem);
         if (!matchingNewItem) {
           appendOrAdd(newOperations, currentItem, Cut());
         }
@@ -111,7 +112,7 @@ function recordChanges() {
 
   for (let id of updatedLookup.keys()) {
     if (!currentState.has(id)) {
-      let operationsByItem = new Map<Item, FileOperation[]>();
+      let operationsByItem = new Map<string, FileOperation[]>();
       if (newOperationsById.has(id)) {
         operationsByItem = newOperationsById.get(id);
       }
@@ -181,7 +182,9 @@ async function executeOperations(nvim: Neovim) {
   }
 
   for (let newFile of newFiles) {
-    await nvim.command("vs " + newFile);
+    if (!itemIsDirectory(newFile)) {
+      await nvim.command("vs " + newFile);
+    }
   }
 }
 
@@ -193,7 +196,7 @@ export default class BalsamicPlugin {
   async openParent() {
     const fullFilePath = await this.nvim.commandOutput("echo expand('%:p')") // Query the current file directory path
     const fullDirectoryPath = path.resolve(path.join(fullFilePath, '..'));
-    createDirectoryBuffer(fullDirectoryPath, this.nvim);
+    createDirectoryBuffer(this.nvim, fullDirectoryPath);
   }
 
   @Command("BalsamicOpen")
@@ -205,7 +208,7 @@ export default class BalsamicPlugin {
       let fullDirectoryPath = await this.nvim.commandOutput("pwd");
 
       if (name.endsWith("\\")) {
-        createDirectoryBuffer(path.join(fullDirectoryPath, name), this.nvim);
+        createDirectoryBuffer(this.nvim, path.join(fullDirectoryPath, name));
       } else {
         this.nvim.command(`e ${name}`);
       }

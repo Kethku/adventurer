@@ -1,10 +1,9 @@
-import { FileOperation, FileOperations, ICopy, ICut, Move, IMove } from "./operations";
-import { Item } from './files';
+import { FileOperation, FileOperations, ICopy, ICut, Move } from "./operations";
 
 /**
  * Merge copy deletes into move operations.
  */
-function createMoves(operationGroups: Map<string, Map<Item, FileOperation[]>>[]) {
+function createMoves(operationGroups: Map<string, Map<string, FileOperation[]>>[]) {
   for (let group of operationGroups) {
     for (let id of group.keys()) {
       let operationsByItem = group.get(id);
@@ -34,18 +33,17 @@ function createMoves(operationGroups: Map<string, Map<Item, FileOperation[]>>[])
   }
 }
 
-function mergeConsecutiveMoves(firstGroup: Map<string, Map<Item, FileOperation[]>>, secondGroup: Map<string, Map<Item, FileOperation[]>>) {
+function mergeConsecutiveMoves(firstGroup: Map<string, Map<string, FileOperation[]>>, secondGroup: Map<string, Map<string, FileOperation[]>>) {
   let idsToDelete: string[] = [];
   for (let id of firstGroup.keys()) {
     let firstOperationsByItem = firstGroup.get(id);
-    let itemsToDelete: Item[] = [];
     if (secondGroup.has(id)) {
       let secondOperationsByItem = secondGroup.get(id);
 
       if (firstOperationsByItem.size != 1 || secondOperationsByItem.size != 1) continue;
-      let firstItem = firstOperationsByItem.keys().next().value as Item;
+      let firstItem = firstOperationsByItem.keys().next().value as string;
       let firstOperations = firstOperationsByItem.get(firstItem);
-      let secondItem = secondOperationsByItem.keys().next().value as Item;
+      let secondItem = secondOperationsByItem.keys().next().value as string;
       let secondOperations = secondOperationsByItem.get(secondItem);
 
       if (firstOperations.length != 1 || secondOperations.length != 1) continue;
@@ -53,22 +51,21 @@ function mergeConsecutiveMoves(firstGroup: Map<string, Map<Item, FileOperation[]
       let secondOperation = secondOperations[0];
 
       if (secondOperation.type === FileOperations.Move) {
-        if (firstOperation.type === FileOperations.New && firstItem.fullPath === secondItem.fullPath) {
-          itemsToDelete.push(firstItem);
-          secondItem.fullPath = secondOperation.destination;
+        if (firstOperation.type === FileOperations.New && firstItem === secondItem) {
+          firstOperationsByItem.delete(firstItem);
+          secondOperationsByItem.delete(secondItem);
+          secondItem = secondOperation.destination;
           secondOperations[0] = { type: FileOperations.New }; // Change second operation to a new
+          secondOperationsByItem.set(secondItem, secondOperations);
         }
 
          
-        if (firstOperation.type === FileOperations.Move && firstOperation.destination === secondItem.fullPath) {
-          itemsToDelete.push(firstItem);
-          secondItem.fullPath = firstItem.fullPath;
+        if (firstOperation.type === FileOperations.Move && firstOperation.destination === secondItem) {
+          firstOperationsByItem.delete(firstItem);
+          secondItem = firstItem;
+          secondOperationsByItem.set(secondItem, secondOperations);
         }
       }
-    }
-
-    for (let itemToDelete of itemsToDelete) {
-      firstOperationsByItem.delete(itemToDelete);
     }
 
     if (firstOperationsByItem.size === 0) {
@@ -84,12 +81,12 @@ function mergeConsecutiveMoves(firstGroup: Map<string, Map<Item, FileOperation[]
 /**
  * Loop over every operation group and merge consecutive moves.
  */
-function mergeMoves(operations: Map<string, Map<Item, FileOperation[]>>[]) {
+function mergeMoves(operations: Map<string, Map<string, FileOperation[]>>[]) {
   if (operations.length < 2) return operations;
 
-  let resultingOperations: Map<string, Map<Item, FileOperation[]>>[] = [];
+  let resultingOperations: Map<string, Map<string, FileOperation[]>>[] = [];
 
-  let first: Map<string, Map<Item, FileOperation[]>> = null;
+  let first: Map<string, Map<string, FileOperation[]>> = null;
   let second = operations.shift();
   do {
     if (first) resultingOperations.push(first);
@@ -107,7 +104,7 @@ function mergeMoves(operations: Map<string, Map<Item, FileOperation[]>>[]) {
 /**
  * Turn new operations into pastes if id was previously cut.
  */
-export function convertNewsToPastes(operationsById: Map<string, Map<Item, FileOperation[]>>[]) {
+export function convertNewsToPastes(operationsById: Map<string, Map<string, FileOperation[]>>[]) {
   // For each id which contains a new operation, if there was a cut before it with the same id, 
   // convert the new to a paste.
 
@@ -133,7 +130,7 @@ export function convertNewsToPastes(operationsById: Map<string, Map<Item, FileOp
 /**
  * Turn unused cuts into deletes.
  */
-export function convertCutsToDeletes(operationsById: Map<string, Map<Item, FileOperation[]>>[]) {
+export function convertCutsToDeletes(operationsById: Map<string, Map<string, FileOperation[]>>[]) {
   // For each id which contains a cut operation, if after the cut there exist no new operation for 
   // that id, convert the cut to a delete.
 
@@ -156,7 +153,7 @@ export function convertCutsToDeletes(operationsById: Map<string, Map<Item, FileO
   }
 }
 
-export function optimize(operations: Map<string, Map<Item, FileOperation[]>>[]) {
+export function optimize(operations: Map<string, Map<string, FileOperation[]>>[]) {
   createMoves(operations);
   convertNewsToPastes(operations);
   convertCutsToDeletes(operations);

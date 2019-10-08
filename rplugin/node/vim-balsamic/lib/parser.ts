@@ -1,6 +1,6 @@
 import * as path from "path";
 
-import { Item, Directory } from "./files";
+import { Directory, pathToItem } from "./files";
 
 export function parseLine(line: string) {
   line = line.trim();
@@ -20,8 +20,8 @@ export function parseLine(line: string) {
 }
 
 export function parseDirectoryBuffer(directoryLookup: Map<string, Directory>) {
-  let updatedLookup = new Map<string, Item[]>();
-  function addUpdatedItem(id: string, item: Item) {
+  let updatedLookup = new Map<string, string[]>();
+  function addUpdatedItem(id: string, item: string) {
     if (updatedLookup.has(id)) {
       updatedLookup.get(id).push(item);
     } else {
@@ -34,11 +34,8 @@ export function parseDirectoryBuffer(directoryLookup: Map<string, Directory>) {
       let parsedLine = parseLine(line);
       if (parsedLine) {
         let { id, name } = parsedLine;
-        let fullPath = path.resolve(path.join(directory.fullDirectoryPath, name));
-
-        addUpdatedItem(id, {
-          name, fullPath
-        });
+        let fullPath = path.join(directory.fullDirectoryPath, name);
+        addUpdatedItem(id, fullPath);
       }
     }
   }

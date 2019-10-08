@@ -1,4 +1,4 @@
-import { Item, itemIsDirectory, nameIsDirectory } from "./files";
+import { itemIsDirectory } from "./files";
 
 export enum FileOperations {
   // Recognizable operations
@@ -116,24 +116,20 @@ export interface IExecutableMove {
 
 export type FileOperation = INew | ICopy | ICut | IPaste | IDelete | IMove;
 
-function itemToString(item: Item) {
-  return item.fullPath + (itemIsDirectory(item) ? "\\" : "");
-}
-
-export function operationToString(id: string, item: Item, operation: FileOperation) {
+export function operationToString(id: string, item: string, operation: FileOperation) {
   switch (operation.type) {
     case FileOperations.New:
-      return `NEW ${itemToString(item)}`;
+      return `NEW ${item}`;
     case FileOperations.Copy:
-      return `COPY ${itemToString(item)} => ${operation.destination}`;
+      return `COPY ${item} => ${operation.destination}`;
     case FileOperations.Cut:
-      return `CUT ${id}:${itemToString(item)}`;
+      return `CUT ${id}:${item}`;
     case FileOperations.Paste:
-      return `PASTE ${id}:${itemToString(item)}`;
+      return `PASTE ${id}:${item}`;
     case FileOperations.Delete:
-      return `DELETE ${itemToString(item)}`;
+      return `DELETE ${item}`;
     case FileOperations.Move:
-      return `MOVE ${itemToString(item)} => ${operation.destination}`;
+      return `MOVE ${item} => ${operation.destination}`;
   }
 }
 
@@ -142,11 +138,11 @@ export type ExecutableFileOperation = IExecutableNew | IExecutableCopy | IExecut
 export function parseOperationString(line: string) : ExecutableFileOperation {
   line = line.trim();
   if (line.startsWith("NEW")) {
-    let rest = line.substr(3).trim();
+    let fullPath = line.substr(3).trim();
     return {
       type: FileOperations.New,
-      fullPath: rest,
-      isDirectory: nameIsDirectory(rest)
+      fullPath,
+      isDirectory: itemIsDirectory(fullPath)
     };
   } else if (line.startsWith("COPY")) {
     let [ source, destination ] = line.substr(4).split(" => ").map(part => part.trim());
@@ -170,10 +166,10 @@ export function parseOperationString(line: string) : ExecutableFileOperation {
       id, fullPath
     };
   } else if (line.startsWith("DELETE")) {
-    let rest = line.substr(6).trim();
+    let fullPath = line.substr(6).trim();
     return {
       type: FileOperations.Delete,
-      fullPath: rest.trim(),
+      fullPath,
     };
   } else if (line.startsWith("MOVE")) {
     let [ from, destination ] = line.substr(4).split(" => ").map(part => part.trim());
