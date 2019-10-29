@@ -54,7 +54,7 @@ async function createDirectoryBuffer(nvim: Neovim, fullDirectoryPath: string) {
     lines = directoryLookup.get(fullDirectoryPath).lines;
   } else {
     let files = getFiles(fullDirectoryPath);
-    lines = [];
+    lines = [ ];
 
     for (let file of files) {
       let id = newId();
@@ -219,13 +219,18 @@ export default class BalsamicPlugin {
     let line = await this.nvim.getLine();
     let parsedLine = parseLine(line);
     if (parsedLine) {
-      let { name } = parsedLine;
-      let fullDirectoryPath = await this.nvim.commandOutput("pwd");
+      let { id, name } = parsedLine;
+      let fullDirectoryPath = await this.nvim.commandOutput("echo expand('%:p')");
 
       if (itemIsDirectory(name)) {
         createDirectoryBuffer(this.nvim, path.join(fullDirectoryPath, name));
       } else {
-        this.nvim.command(`e ${name}`);
+        if (initialState.has(id)) {
+          let file = initialState.get(id);
+          await this.nvim.command(`e ${file}`);
+        } else {
+          await this.nvim.outWriteLine("File does not exits.");
+        }
       }
     }
   }
